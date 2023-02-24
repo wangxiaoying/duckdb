@@ -285,7 +285,7 @@ unique_ptr<GlobalTableFunctionState> ArrowTableFunction::ArrowScanInitGlobal(Cli
 unique_ptr<LocalTableFunctionState> ArrowTableFunction::ArrowScanInitLocal(ExecutionContext &context,
                                                                            TableFunctionInitInput &input,
                                                                            GlobalTableFunctionState *global_state_p) {
-	auto &global_state = (ArrowScanGlobalState &)*global_state_p;
+	// auto &global_state = (ArrowScanGlobalState &)*global_state_p;
 	auto current_chunk = make_unique<ArrowArrayWrapper>();
 	auto result = make_unique<ArrowScanLocalState>(std::move(current_chunk));
 	result->column_ids = input.column_ids;
@@ -294,9 +294,9 @@ unique_ptr<LocalTableFunctionState> ArrowTableFunction::ArrowScanInitLocal(Execu
 		auto &asgs = (ArrowScanGlobalState &)*global_state_p;
 		result->all_columns.Initialize(context.client, asgs.scanned_types);
 	}
-	if (!ArrowScanParallelStateNext(context.client, input.bind_data, *result, global_state)) {
-		return nullptr;
-	}
+	// if (!ArrowScanParallelStateNext(context.client, input.bind_data, *result, global_state)) {
+	// 	return nullptr;
+	// }
 	return std::move(result);
 }
 

@@ -28,6 +28,7 @@
 #include "duckdb/optimizer/optimizer_extension.hpp"
 #include "duckdb/parser/parser_extension.hpp"
 #include "duckdb/planner/operator_extension.hpp"
+#include "duckdb/parser/rewriter_extension.hpp"
 
 namespace duckdb {
 class CastFunctionSet;
@@ -184,6 +185,8 @@ public:
 	vector<std::unique_ptr<OperatorExtension>> operator_extensions;
 	//! Extensions made to storage
 	case_insensitive_map_t<std::unique_ptr<StorageExtension>> storage_extensions;
+	//! Extensions made to the rewriter
+	vector<RewriterExtension> rewriter_extensions;
 
 public:
 	DUCKDB_API static DBConfig &GetConfig(ClientContext &context);
