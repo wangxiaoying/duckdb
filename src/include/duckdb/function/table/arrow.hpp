@@ -115,7 +115,8 @@ struct ArrowTableFunction {
 public:
 	static void RegisterFunction(BuiltinFunctions &set);
 
-protected:
+// protected:
+// Able to access these static functions from extension
 	//! Binds an arrow table
 	static unique_ptr<FunctionData> ArrowScanBind(ClientContext &context, TableFunctionBindInput &input,
 	                                              vector<LogicalType> &return_types, vector<string> &names);

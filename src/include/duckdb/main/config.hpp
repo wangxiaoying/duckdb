@@ -27,6 +27,7 @@
 #include "duckdb/optimizer/optimizer_extension.hpp"
 #include "duckdb/parser/parser_extension.hpp"
 #include "duckdb/planner/operator_extension.hpp"
+#include "duckdb/parser/rewriter_extension.hpp"
 
 namespace duckdb {
 class CastFunctionSet;
@@ -167,6 +168,8 @@ public:
 	shared_ptr<Allocator> default_allocator;
 	//! Extensions made to binder
 	vector<OperatorExtension> operator_extensions;
+	//! Extensions made to the rewriter
+	vector<RewriterExtension> rewriter_extensions;
 
 public:
 	DUCKDB_API static DBConfig &GetConfig(ClientContext &context);
