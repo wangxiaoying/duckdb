@@ -72,7 +72,10 @@ unique_ptr<QueryResult> Connection::SendQuery(const string &query) {
 }
 
 unique_ptr<MaterializedQueryResult> Connection::Query(const string &query) {
-	auto result = context->Query(query, false);
+    // Rewrite query before parsing
+    string rewritten_query = RewriteQuery(query);
+
+	auto result = context->Query(rewritten_query, false);
 	D_ASSERT(result->type == QueryResultType::MATERIALIZED_RESULT);
 	return unique_ptr_cast<QueryResult, MaterializedQueryResult>(std::move(result));
 }
@@ -292,5 +295,14 @@ bool Connection::IsAutoCommit() {
 bool Connection::HasActiveTransaction() {
 	return context->transaction.HasActiveTransaction();
 }
+
+string Connection::RewriteQuery(const string &query) {
+    string rewritten_query = query;
+    for (auto &rewriter_extension : DBConfig::GetConfig(*context).rewriter_extensions) {
+        rewritten_query = rewriter_extension.rewriter_function(*this, rewriter_extension.rewriter_info.get(), rewritten_query);
+	}
+    return rewritten_query;
+}
+
 
 } // namespace duckdb

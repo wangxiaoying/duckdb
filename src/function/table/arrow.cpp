@@ -294,9 +294,9 @@ unique_ptr<LocalTableFunctionState> ArrowTableFunction::ArrowScanInitLocal(Execu
 		auto &asgs = (ArrowScanGlobalState &)*global_state_p;
 		result->all_columns.Initialize(context.client, asgs.scanned_types);
 	}
-	if (!ArrowScanParallelStateNext(context.client, input.bind_data, *result, global_state)) {
-		return nullptr;
-	}
+	// if (!ArrowScanParallelStateNext(context.client, input.bind_data, *result, global_state)) {
+	// 	return nullptr;
+	// }
 	return std::move(result);
 }
 
