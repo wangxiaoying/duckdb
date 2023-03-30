@@ -23,6 +23,10 @@
 #include <cmath>
 #include <numeric>
 
+#include <iostream>
+#include <chrono>
+#include <ctime>
+
 namespace duckdb {
 
 class WindowGlobalHashGroup {
@@ -129,6 +133,9 @@ public:
 
 			ResizeGroupingData(op.estimated_cardinality);
 		}
+	}
+
+	virtual ~WindowGlobalSinkState() {
 	}
 
 	void UpdateLocalPartition(GroupingPartition &local_partition, GroupingAppend &local_append);
@@ -308,7 +315,7 @@ void WindowGlobalSinkState::BuildSortState(ColumnDataCollection &group_data, Win
 class WindowLocalSinkState : public LocalSinkState {
 public:
 	WindowLocalSinkState(ClientContext &context, const PhysicalWindow &op_p)
-	    : op(op_p), allocator(Allocator::Get(context)), executor(context) {
+	    : op(op_p), allocator(Allocator::Get(context)), executor(context), is_first(true) {
 		D_ASSERT(op.select_list[0]->GetExpressionClass() == ExpressionClass::BOUND_WINDOW);
 		auto wexpr = reinterpret_cast<BoundWindowExpression *>(op.select_list[0].get());
 
@@ -360,6 +367,9 @@ public:
 	void Sink(DataChunk &input_chunk, WindowGlobalSinkState &gstate);
 	//! Merge the state into the global state.
 	void Combine(WindowGlobalSinkState &gstate);
+
+	std::chrono::time_point<std::chrono::system_clock> start_time;
+	bool is_first;
 };
 
 void WindowLocalSinkState::Hash(DataChunk &input_chunk, Vector &hash_vector) {
@@ -425,6 +435,10 @@ void WindowLocalSinkState::Sink(DataChunk &input_chunk, WindowGlobalSinkState &g
 }
 
 void WindowLocalSinkState::Combine(WindowGlobalSinkState &gstate) {
+	std::chrono::duration<double> duration = std::chrono::system_clock::now() - start_time;
+    std::cout << "Local Sink took: " << duration.count() << "s" << std::endl;
+	start_time = std::chrono::system_clock::now();
+
 	// OVER()
 	if (sort_cols == 0) {
 		// Only one partition again, so need a global lock.
@@ -445,6 +459,9 @@ void WindowLocalSinkState::Combine(WindowGlobalSinkState &gstate) {
 
 	// OVER(...)
 	gstate.CombineLocalPartition(local_partition, local_append);
+
+	duration = std::chrono::system_clock::now() - start_time;
+    std::cout << "Local Combine took: " << duration.count() << "s" << std::endl;
 }
 
 // this implements a sorted window functions variant
@@ -1338,15 +1355,23 @@ SinkResultType PhysicalWindow::Sink(ExecutionContext &context, GlobalSinkState &
 	auto &gstate = (WindowGlobalSinkState &)gstate_p;
 	auto &lstate = (WindowLocalSinkState &)lstate_p;
 
+	if (lstate.is_first) {
+		lstate.start_time = std::chrono::system_clock::now();
+		lstate.is_first = false;
+	}
+
 	lstate.Sink(input, gstate);
 
 	return SinkResultType::NEED_MORE_INPUT;
 }
 
 void PhysicalWindow::Combine(ExecutionContext &context, GlobalSinkState &gstate_p, LocalSinkState &lstate_p) const {
+	auto time_start = std::chrono::system_clock::now();
 	auto &gstate = (WindowGlobalSinkState &)gstate_p;
 	auto &lstate = (WindowLocalSinkState &)lstate_p;
 	lstate.Combine(gstate);
+	std::chrono::duration<double> duration = std::chrono::system_clock::now() - time_start;
+    std::cout << "PhysicalWindow::Combine took: " << duration.count() << "s" << std::endl;
 }
 
 unique_ptr<LocalSinkState> PhysicalWindow::GetLocalSinkState(ExecutionContext &context) const {
@@ -1537,6 +1562,9 @@ public:
 	    : ExecutorTask(context_p), event(std::move(event_p)), hash_groups(hash_groups_p) {
 	}
 
+	virtual ~WindowMergeTask() {
+	}
+
 	TaskExecutionResult ExecuteTask(TaskExecutionMode mode) override;
 
 private:
@@ -1546,6 +1574,8 @@ private:
 };
 
 TaskExecutionResult WindowMergeTask::ExecuteTask(TaskExecutionMode mode) {
+	auto start_time = std::chrono::system_clock::now();
+
 	// Loop until all hash groups are done
 	size_t sorted = 0;
 	while (sorted < hash_groups.states.size()) {
@@ -1598,7 +1628,14 @@ TaskExecutionResult WindowMergeTask::ExecuteTask(TaskExecutionMode mode) {
 		}
 	}
 
+	std::chrono::duration<double> duration = std::chrono::system_clock::now() - start_time;
+    std::cout << "Local WindowMerge::ExecuteTask run tasks took: " << duration.count() << "s" << std::endl;
+	start_time = std::chrono::system_clock::now();
+
 	event->FinishTask();
+
+	duration = std::chrono::system_clock::now() - start_time;
+    std::cout << "Local WindowMerge::ExecuteTask FinishTask took: " << duration.count() << "s" << std::endl;
 	return TaskExecutionResult::TASK_FINISHED;
 }
 
@@ -1606,6 +1643,8 @@ class WindowMergeEvent : public BasePipelineEvent {
 public:
 	WindowMergeEvent(WindowGlobalSinkState &gstate_p, Pipeline &pipeline_p)
 	    : BasePipelineEvent(pipeline_p), gstate(gstate_p), merge_states(gstate_p) {
+	}
+	virtual ~WindowMergeEvent() {
 	}
 
 	WindowGlobalSinkState &gstate;
@@ -1629,6 +1668,7 @@ public:
 
 SinkFinalizeType PhysicalWindow::Finalize(Pipeline &pipeline, Event &event, ClientContext &context,
                                           GlobalSinkState &gstate_p) const {
+	auto time_start = std::chrono::system_clock::now();
 	auto &state = (WindowGlobalSinkState &)gstate_p;
 
 	//	Did we get any data?
@@ -1653,6 +1693,9 @@ SinkFinalizeType PhysicalWindow::Finalize(Pipeline &pipeline, Event &event, Clie
 	auto new_event = make_shared<WindowMergeEvent>(state, pipeline);
 	event.InsertEvent(std::move(new_event));
 
+	std::chrono::duration<double> duration = std::chrono::system_clock::now() - time_start;
+    std::cout << "PhysicalWindow::Finalize took: " << duration.count() << "s" << std::endl;
+
 	return SinkFinalizeType::READY;
 }
 
@@ -1662,6 +1705,9 @@ SinkFinalizeType PhysicalWindow::Finalize(Pipeline &pipeline, Event &event, Clie
 class WindowGlobalSourceState : public GlobalSourceState {
 public:
 	explicit WindowGlobalSourceState(const PhysicalWindow &op) : op(op), next_bin(0) {
+	}
+
+	virtual ~WindowGlobalSourceState() {
 	}
 
 	const PhysicalWindow &op;
@@ -1694,7 +1740,7 @@ public:
 	using WindowExecutors = vector<WindowExecutorPtr>;
 
 	WindowLocalSourceState(const PhysicalWindow &op, ExecutionContext &context, WindowGlobalSourceState &gstate)
-	    : context(context.client), allocator(Allocator::Get(context.client)) {
+	    : context(context.client), allocator(Allocator::Get(context.client)), is_first(true) {
 		vector<LogicalType> output_types;
 		for (idx_t expr_idx = 0; expr_idx < op.select_list.size(); ++expr_idx) {
 			D_ASSERT(op.select_list[expr_idx]->GetExpressionClass() == ExpressionClass::BOUND_WINDOW);
@@ -1737,6 +1783,9 @@ public:
 	DataChunk input_chunk;
 	//! Buffer for window results
 	DataChunk output_chunk;
+
+	std::chrono::time_point<std::chrono::system_clock> start_time;
+	bool is_first;
 };
 
 void WindowLocalSourceState::MaterializeSortedData() {
@@ -1913,6 +1962,11 @@ void PhysicalWindow::GetData(ExecutionContext &context, DataChunk &chunk, Global
 	auto &global_source = (WindowGlobalSourceState &)gstate_p;
 	auto &gstate = (WindowGlobalSinkState &)*sink_state;
 
+	if (state.is_first) {
+		state.start_time = std::chrono::system_clock::now();
+		state.is_first = false;
+	}
+
 	const auto bin_count = gstate.hash_groups.empty() ? 1 : gstate.hash_groups.size();
 
 	while (chunk.size() == 0) {
@@ -1924,6 +1978,10 @@ void PhysicalWindow::GetData(ExecutionContext &context, DataChunk &chunk, Global
 			state.hash_group.reset();
 			auto hash_bin = global_source.next_bin++;
 			if (hash_bin >= bin_count) {
+				if (chunk.size() == 0) {
+					std::chrono::duration<double> duration = std::chrono::system_clock::now() - state.start_time;
+    				std::cout << "Local GetData took: " << duration.count() << "s" << std::endl;
+				}
 				return;
 			}
 
@@ -1936,6 +1994,11 @@ void PhysicalWindow::GetData(ExecutionContext &context, DataChunk &chunk, Global
 		}
 
 		state.Scan(chunk);
+	}
+
+	if (chunk.size() == 0) {
+		std::chrono::duration<double> duration = std::chrono::system_clock::now() - state.start_time;
+    	std::cout << "Local GetData took: " << duration.count() << "s" << std::endl;
 	}
 }
 
